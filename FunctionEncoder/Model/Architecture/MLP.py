@@ -86,5 +86,58 @@ class MLP(BaseArchitecture):
         if reshape == 2:
             Gs = Gs.squeeze(0)
         return Gs
+        
+    def compute_orthogonality_penalty(
+        self, 
+        x: torch.Tensor, 
+        weight: float = 1.0,
+        enforce_unit_norm: bool = True,
+    ) -> torch.Tensor:
+        """
+        Computes a penalty encouraging the learned basis functions to be
+        orthogonal (and optionally unit norm).
+
+        Args:
+            x (torch.Tensor): input data, shape (f, d, input_dim) or (d, input_dim).
+            weight (float): scaling factor for the penalty.
+            enforce_unit_norm (bool): True => push diagonal of Gram to 1,
+                                      False => only push off-diagonals to 0.
+
+        Returns:
+            torch.Tensor: a scalar penalty (requires_grad=True).
+        """
+        # Forward pass => shape (f, d, output_dim, n_basis) if learn_basis_functions is True
+        Gs = self.forward(x)
+
+        # Flatten all but the last dimension (n_basis). E.g. if shape is (f, d, 1, k),
+        # we want shape (f*d, k) or (f*d*m, k) in a more general scenario.
+        if Gs.dim() == 4:
+            # e.g. (f, d, 1, k)
+            Gs = Gs.reshape(-1, Gs.shape[-1])  # (f*d*m, k)
+        elif Gs.dim() == 3:
+            # e.g. (f, d, k) if output_size=(1,)
+            Gs = Gs.reshape(-1, Gs.shape[-1])  # (f*d, k)
+        else:
+            # If you've got a different shape, adapt accordingly
+            raise ValueError(f"Unexpected shape for Gs: {Gs.shape}")
+
+        # Now Gs is (N, k), where N = f*d*(m...) and k = n_basis
+        # Gram matrix: shape (k, k)
+        Gram = Gs.T @ Gs  # i.e., G^T G
+
+        # We want Gram ~ I for orthonormal. 
+        # If `enforce_unit_norm=True`, penalize full (Gram - I). 
+        # Otherwise, penalize only off-diagonals (orthogonality but not unit norm).
+        I = torch.eye(Gram.shape[0], device=Gram.device)
+        if enforce_unit_norm:
+            # Full orthonormal penalty (off-diagonal + diagonal => I)
+            penalty = (Gram - I).pow(2).sum()
+        else:
+            # Only orthogonality => zero out diagonal, penalize off-diagonals
+            diag = torch.diag(torch.diag(Gram))
+            penalty = (Gram - diag).pow(2).sum()
+
+        return weight * penalty
+        
 
 
