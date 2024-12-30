@@ -608,7 +608,7 @@ class FunctionEncoder(torch.nn.Module):
             if self.average_function is not None:
                 loss = loss + average_function_loss
 
-            orth_weight = 1e-2
+            orth_weight = 5e-4
             orth_loss = self.model.compute_orthogonality_penalty(
                 x=query_xs, 
                 weight=orth_weight,
