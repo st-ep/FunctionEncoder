@@ -607,6 +607,14 @@ class FunctionEncoder(torch.nn.Module):
                 loss = loss + self.regularization_parameter * norm_loss
             if self.average_function is not None:
                 loss = loss + average_function_loss
+
+            orth_weight = 1e-3
+            orth_loss = self.model.compute_orthogonality_penalty(
+                x=query_xs, 
+                weight=orth_weight,
+                enforce_unit_norm=True  # if you want them not just orth but also unit norm
+            )
+            loss = loss + orth_loss
             
             # backprop with gradient clipping
             loss.backward()
