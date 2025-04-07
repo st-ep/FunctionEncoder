@@ -1,9 +1,10 @@
 import math
 
 import torch
+from typing import Tuple
 
 from FunctionEncoder.Model.Architecture.BaseArchitecture import BaseArchitecture
-from FunctionEncoder.Model.Architecture.MLP import get_activation
+from .utils import get_activation, ParallelLinear
 
 
 class ParallelLinear(torch.nn.Module):

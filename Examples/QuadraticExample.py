@@ -2,6 +2,7 @@ from datetime import datetime
 
 import matplotlib.pyplot as plt
 import torch
+import time
 
 from FunctionEncoder import QuadraticDataset, FunctionEncoder, MSECallback, ListCallback, TensorboardCallback, \
     DistanceCallback
@@ -12,7 +13,9 @@ import argparse
 # parse args
 parser = argparse.ArgumentParser()
 parser.add_argument("--n_basis", type=int, default=11)
-parser.add_argument("--train_method", type=str, default="least_squares")
+parser.add_argument("--representation_mode", type=str, default="least_squares",
+                    choices=["least_squares", "inner_product", "encoder_network"],
+                    help="Method for computing representation.")
 parser.add_argument("--epochs", type=int, default=1_000)
 parser.add_argument("--load_path", type=str, default=None)
 parser.add_argument("--seed", type=int, default=0)
@@ -25,12 +28,12 @@ args = parser.parse_args()
 epochs = args.epochs
 n_basis = args.n_basis
 device = "cuda" if torch.cuda.is_available() else "cpu"
-train_method = args.train_method
+representation_mode = args.representation_mode
 seed = args.seed
 load_path = args.load_path
 residuals = args.residuals
 if load_path is None:
-    logdir = f"logs/quadratic_example/{train_method}/{'shared_model' if not args.parallel else 'parallel_models'}/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    logdir = f"logs/quadratic_example/{representation_mode}/{'shared_model' if not args.parallel else 'parallel_models'}/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
 else:
     logdir = load_path
 arch = "MLP" if not args.parallel else "ParallelMLP"
@@ -55,7 +58,7 @@ if load_path is None:
                             data_type=dataset.data_type,
                             n_basis=n_basis,
                             model_type=arch,
-                            method=train_method,
+                            representation_mode=representation_mode,
                             use_residuals_method=residuals).to(device)
     print('Number of parameters:', sum(p.numel() for p in model.parameters()))
 
@@ -76,7 +79,7 @@ else:
                             data_type=dataset.data_type,
                             n_basis=n_basis,
                             model_type=arch,
-                            method=train_method,
+                            representation_mode=representation_mode,
                             use_residuals_method=residuals).to(device)
     model.load_state_dict(torch.load(f"{logdir}/model.pth"))
 
@@ -86,22 +89,16 @@ with torch.no_grad():
     n_examples = 100
     example_xs, example_ys, query_xs, query_ys, info = dataset.sample()
     example_xs, example_ys = example_xs[:, :n_examples, :], example_ys[:, :n_examples, :]
-    if train_method == "inner_product":
-        y_hats_ip = model.predict_from_examples(example_xs, example_ys, query_xs, method="inner_product")
-    y_hats_ls = model.predict_from_examples(example_xs, example_ys, query_xs, method="least_squares")
+    y_hats = model.predict_from_examples(example_xs, example_ys, query_xs)
     query_xs, indicies = torch.sort(query_xs, dim=-2)
     query_ys = query_ys.gather(dim=-2, index=indicies)
-    y_hats_ls = y_hats_ls.gather(dim=-2, index=indicies)
-    if train_method == "inner_product":
-        y_hats_ip = y_hats_ip.gather(dim=-2, index=indicies)
+    y_hats = y_hats.gather(dim=-2, index=indicies)
 
     fig, axs = plt.subplots(3, 3, figsize=(15, 10))
     for i in range(n_plots):
         ax = axs[i // 3, i % 3]
         ax.plot(query_xs[i].cpu(), query_ys[i].cpu(), label="True")
-        ax.plot(query_xs[i].cpu(), y_hats_ls[i].cpu(), label="LS")
-        if train_method == "inner_product":
-            ax.plot(query_xs[i].cpu(), y_hats_ip[i].cpu(), label="IP")
+        ax.plot(query_xs[i].cpu(), y_hats[i].cpu(), label=f"Pred ({representation_mode})")
         if i == n_plots - 1:
             ax.legend()
         title = f"${info['As'][i].item():.2f}x^2 + {info['Bs'][i].item():.2f}x + {info['Cs'][i].item():.2f}$"
@@ -110,20 +107,59 @@ with torch.no_grad():
         ax.set_ylim(y_min, y_max)
 
     plt.tight_layout()
-    plt.savefig(f"{logdir}/plot.png")
+    plot_path = f"{logdir}/plot.png"
+    print(f"DEBUG: Attempting to save main plot to: {plot_path}")
+    plt.savefig(plot_path)
+    print(f"DEBUG: Main plot save command executed.")
     plt.clf()
 
     # plot the basis functions
     fig, ax = plt.subplots(1, 1, figsize=(15, 10))
-    query_xs = torch.linspace(input_range[0], input_range[1], 1_000).reshape(1000, 1).to(device)
-    basis = model.forward_basis_functions(query_xs)
+    basis_plot_xs = torch.linspace(input_range[0], input_range[1], 1_000).reshape(1000, 1).to(device)
+    basis = model.forward_basis_functions(basis_plot_xs)
     for i in range(n_basis):
-        ax.plot(query_xs.flatten().cpu(), basis[:, 0, i].cpu(), color="black")
+        ax.plot(basis_plot_xs.flatten().cpu(), basis[:, 0, i].cpu(), color="black")
     if residuals:
-        avg_function = model.average_function.forward(query_xs)
-        ax.plot(query_xs.flatten().cpu(), avg_function.flatten().cpu(), color="blue")
+        avg_function = model.average_function.forward(basis_plot_xs)
+        ax.plot(basis_plot_xs.flatten().cpu(), avg_function.flatten().cpu(), color="blue")
 
     plt.tight_layout()
-    plt.savefig(f"{logdir}/basis.png")
+    basis_path = f"{logdir}/basis.png"
+    print(f"DEBUG: Attempting to save basis plot to: {basis_path}")
+    plt.savefig(basis_path)
+    print(f"DEBUG: Basis plot save command executed.")
+    # plt.clf() # Optional: comment out the last clf just in case
+
+    # Test inference speed
+    device = next(model.parameters()).device
+    # Use the example data generated for the plots
+    test_example_xs = example_xs.to(device)
+    test_example_ys = example_ys.to(device)
+
+    # --- Time Representation Computation ---
+    # (This part now times the specific mode the model is configured with)
+    torch.cuda.synchronize() # Ensure previous GPU work is done (if using GPU)
+    start_time = time.perf_counter()
+    with torch.no_grad():
+        computed_reps, _ = model.compute_representation(test_example_xs, test_example_ys)
+    torch.cuda.synchronize() # Ensure GPU work is done
+    end_time = time.perf_counter()
+    rep_time = end_time - start_time
+    print(f"{representation_mode.upper()} Representation Time: {rep_time:.6f}s")
+
+    # Test prediction accuracy using the correct query data
+    # Use the query_xs and query_ys generated earlier for the plots
+    test_query_xs_acc = query_xs.to(device) # Shape (n_plots, n_query_points, 1)
+    test_query_ys_acc = query_ys.to(device) # Shape (n_plots, n_query_points, 1)
+
+    with torch.no_grad():
+        # Predict using the same example data as the timing test
+        y_hats_acc = model.predict_from_examples(test_example_xs, test_example_ys, test_query_xs_acc)
+
+        # Calculate MSE against the *correct* target values
+        mse_acc = torch.mean((y_hats_acc - test_query_ys_acc)**2)
+
+    # Print the single, meaningful MSE value for the current mode
+    print(f"{representation_mode.upper()} Prediction MSE on test functions: {mse_acc.item():.6f}")
 
 

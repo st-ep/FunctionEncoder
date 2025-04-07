@@ -3,7 +3,8 @@ from typing import Iterable, List
 import torch
 
 from FunctionEncoder.Model.Architecture.BaseArchitecture import BaseArchitecture
-from FunctionEncoder.Model.Architecture.MLP import get_activation, MLP
+from .MLP import MLP
+from .utils import get_activation
 
 
 class ConvLayers(BaseArchitecture):

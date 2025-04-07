@@ -1,6 +1,8 @@
 import torch
+from typing import Tuple
 
 from FunctionEncoder.Model.Architecture.BaseArchitecture import BaseArchitecture
+from .utils import get_activation
 
 
 # Returns the desired activation function by name

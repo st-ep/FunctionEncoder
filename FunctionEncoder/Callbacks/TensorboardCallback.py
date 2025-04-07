@@ -1,8 +1,10 @@
 from typing import Any, Union
 
 from torch.utils.tensorboard import SummaryWriter
+import torch
 
 from FunctionEncoder import BaseCallback
+from FunctionEncoder.Model.FunctionEncoder import FunctionEncoder
 
 
 class TensorboardCallback(BaseCallback):
@@ -46,7 +48,12 @@ class TensorboardCallback(BaseCallback):
             self.tensorboard.add_scalar(f"{self.prefix}/gradient_norm", norm.item(), self.total_epochs)
         if "norm_loss" in locals:
             norm_loss = locals["norm_loss"]
-            self.tensorboard.add_scalar(f"{self.prefix}/basis_function_magnitude_loss", norm_loss.item(), self.total_epochs)
+            function_encoder: FunctionEncoder = locals["self"]
+            if function_encoder.representation_mode == "least_squares":
+                if isinstance(norm_loss, torch.Tensor):
+                    self.tensorboard.add_scalar(f"{self.prefix}/basis_function_magnitude_loss", norm_loss.item(), self.total_epochs)
+                else:
+                    self.tensorboard.add_scalar(f"{self.prefix}/basis_function_magnitude_loss", norm_loss, self.total_epochs)
         if "average_function_loss" in locals:
             average_function_loss = locals["average_function_loss"]
             self.tensorboard.add_scalar(f"{self.prefix}/average_function_mean_distance_squared", average_function_loss.item(), self.total_epochs)

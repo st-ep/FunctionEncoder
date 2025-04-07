@@ -39,7 +39,7 @@ class DistanceCallback(BaseCallback):
             example_xs, example_ys, query_xs, query_ys, info = self.testing_dataset.sample()
 
             # compute representation
-            y_hats = function_encoder.predict_from_examples(example_xs, example_ys, query_xs, method=function_encoder.method)
+            y_hats = function_encoder.predict_from_examples(example_xs, example_ys, query_xs)
 
             # measure mse
             loss = function_encoder._distance(y_hats, query_ys, squared=True).mean()
