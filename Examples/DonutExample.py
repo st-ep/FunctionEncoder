@@ -9,8 +9,10 @@ from FunctionEncoder import GaussianDonutDataset, FunctionEncoder, DistanceCallb
 # parse args
 parser = argparse.ArgumentParser()
 parser.add_argument("--n_basis", type=int, default=100)
-parser.add_argument("--train_method", type=str, default="least_squares")
-parser.add_argument("--epochs", type=int, default=10_000)
+parser.add_argument("--representation_mode", type=str, default="least_squares",
+                    choices=["least_squares", "inner_product", "encoder_network"],
+                    help="Method for computing representation.")
+parser.add_argument("--epochs", type=int, default=2000)
 parser.add_argument("--load_path", type=str, default=None)
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--residuals", action="store_true")
@@ -20,12 +22,12 @@ args = parser.parse_args()
 epochs = args.epochs
 n_basis = args.n_basis
 device = "cuda"
-train_method = args.train_method
+representation_mode = args.representation_mode
 seed = args.seed
 load_path = args.load_path
 residuals = args.residuals
 if load_path is None:
-    logdir = f"logs/donut_example/{train_method}/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+    logdir = f"logs/donut_example/{representation_mode}/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
 else:
     logdir = load_path
 
@@ -37,13 +39,25 @@ torch.manual_seed(seed)
 dataset = GaussianDonutDataset(noise=0.1)
 
 if load_path is None:
+    # Define default encoder kwargs (can be customized)
+    custom_encoder_kwargs = dict(
+        phi_hidden_size=128,
+        phi_n_layers=3,
+        rho_hidden_size=128,
+        rho_n_layers=3,
+        activation="relu",
+        aggregation="mean"
+    )
+
     # create the model
     model = FunctionEncoder(input_size=dataset.input_size,
                             output_size=dataset.output_size,
                             data_type=dataset.data_type,
                             n_basis=n_basis,
-                            method=train_method,
+                            representation_mode=representation_mode,
+                            encoder_kwargs=custom_encoder_kwargs if representation_mode == "encoder_network" else dict(),
                             use_residuals_method=residuals).to(device)
+    print('Number of parameters:', sum(p.numel() for p in model.parameters()))
 
     # create callbacks
     cb1 = TensorboardCallback(logdir) # this one logs training data
@@ -56,12 +70,22 @@ if load_path is None:
     # save the model
     torch.save(model.state_dict(), f"{logdir}/model.pth")
 else:
-    # load the model
+    # Define default encoder kwargs for loading as well
+    custom_encoder_kwargs = dict(
+        phi_hidden_size=128,
+        phi_n_layers=3,
+        rho_hidden_size=128,
+        rho_n_layers=3,
+        activation="relu",
+        aggregation="mean"
+    )
+    # Update FunctionEncoder instantiation for loading
     model = FunctionEncoder(input_size=dataset.input_size,
                             output_size=dataset.output_size,
                             data_type=dataset.data_type,
                             n_basis=n_basis,
-                            method=train_method,
+                            representation_mode=representation_mode,
+                            encoder_kwargs=custom_encoder_kwargs if representation_mode == "encoder_network" else dict(),
                             use_residuals_method=residuals).to(device)
     model.load_state_dict(torch.load(f"{logdir}/model.pth"))
 
@@ -82,7 +106,7 @@ with torch.no_grad():
     xs = torch.stack(torch.meshgrid(grid, grid, indexing="ij"), dim=-1).reshape(-1, 2).expand(10, -1, -1)
 
     # compute pdf
-    logits = model.predict_from_examples(example_xs, example_ys, xs, method=args.train_method)
+    logits = model.predict_from_examples(example_xs, example_ys, xs)
     e_logits = torch.exp(logits)
     sums = torch.mean(e_logits, dim=1, keepdim=True) * dataset.volume
     pdf = e_logits / sums
