@@ -13,7 +13,7 @@ parser.add_argument("--n_basis", type=int, default=100)
 parser.add_argument("--representation_mode", type=str, default="least_squares",
                     choices=["least_squares", "inner_product", "encoder_network"],
                     help="Method for computing representation.")
-parser.add_argument("--epochs", type=int, default=10000)
+parser.add_argument("--epochs", type=int, default=1000)
 parser.add_argument("--load_path", type=str, default=None)
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--residuals", action="store_true")
@@ -46,7 +46,8 @@ if load_path is None:
         rho_hidden_size=128,
         rho_n_layers=3,
         activation="relu",
-        aggregation="mean"
+        aggregation="mean",
+        use_layer_norm=True
     )
 
     # create the model
@@ -78,7 +79,8 @@ else:
         rho_hidden_size=128,
         rho_n_layers=3,
         activation="relu",
-        aggregation="mean"
+        aggregation="mean",
+        use_layer_norm=True
     )
     model = FunctionEncoder(input_size=dataset.input_size,
                             output_size=dataset.output_size,

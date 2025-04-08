@@ -171,6 +171,7 @@ class FunctionEncoder(torch.nn.Module):
         """Builds the representation encoder model."""
         if type(encoder_type) == str:
             if encoder_type == "RepresentationEncoderDeepSets":
+                # Pass all relevant kwargs, including use_layer_norm if present
                 return RepresentationEncoderDeepSets(input_size=self.input_size,
                                                      output_size=self.output_size,
                                                      n_basis=self.n_basis,
@@ -178,6 +179,7 @@ class FunctionEncoder(torch.nn.Module):
             else:
                 raise ValueError(f"Unknown encoder type: {encoder_type}")
         elif issubclass(encoder_type, BaseArchitecture):
+             # Pass all relevant kwargs, including use_layer_norm if present
              return encoder_type(input_size=self.input_size,
                                  output_size=self.output_size,
                                  n_basis=self.n_basis,
@@ -749,28 +751,39 @@ class FunctionEncoder(torch.nn.Module):
             if use_residuals_method:
                 n_params += ParallelMLP.predict_number_params(input_size, output_size, n_basis, learn_basis_functions=False, **model_kwargs)
         elif model_type == "Euclidean":
-            n_params += Euclidean.predict_number_params(output_size, n_basis)
+            # Euclidean doesn't have learn_basis_functions arg, pass only relevant args
+            euclidean_kwargs = {k: v for k, v in model_kwargs.items() if k in ['output_size', 'n_basis']} # Adjust if Euclidean takes other args
+            n_params += Euclidean.predict_number_params(output_size=output_size, n_basis=n_basis, **euclidean_kwargs)
             if use_residuals_method:
-                n_params += Euclidean.predict_number_params(output_size, n_basis)
+                 n_params += Euclidean.predict_number_params(output_size=output_size, n_basis=n_basis, **euclidean_kwargs)
         elif model_type == "CNN":
             n_params += CNN.predict_number_params(input_size, output_size, n_basis,  learn_basis_functions=True, **model_kwargs)
             if use_residuals_method:
                 n_params += CNN.predict_number_params(input_size, output_size, n_basis, learn_basis_functions=False, **model_kwargs)
-        elif isinstance(model_type, type):
+        elif isinstance(model_type, type) and issubclass(model_type, BaseArchitecture):
             n_params += model_type.predict_number_params(input_size, output_size, n_basis,  learn_basis_functions=True, **model_kwargs)
             if use_residuals_method:
                 n_params += model_type.predict_number_params(input_size, output_size, n_basis, learn_basis_functions=False, **model_kwargs)
         else:
-            raise ValueError(f"Unknown model type: '{model_type}'. Should be one of 'MLP', 'ParallelMLP', 'Euclidean', or 'CNN'")
+            raise ValueError(f"Unknown model type: '{model_type}'. Should be one of 'MLP', 'ParallelMLP', 'Euclidean', 'CNN' or a BaseArchitecture subclass.")
+
 
         # --- Parameters for Representation Encoder Model ---
         if representation_mode == "encoder_network":
-            if encoder_type == "RepresentationEncoderDeepSets":
-                n_params += RepresentationEncoderDeepSets.predict_number_params(input_size, output_size, n_basis, **encoder_kwargs)
-            elif isinstance(encoder_type, type):
-                 n_params += encoder_type.predict_number_params(input_size, output_size, n_basis, **encoder_kwargs)
+            # Extract the specific encoder class to call its static method
+            EncoderClass = None
+            if isinstance(encoder_type, str):
+                if encoder_type == "RepresentationEncoderDeepSets":
+                    EncoderClass = RepresentationEncoderDeepSets
+                # Add other string-based encoder types here if needed
+            elif isinstance(encoder_type, type) and issubclass(encoder_type, BaseArchitecture):
+                EncoderClass = encoder_type
+
+            if EncoderClass:
+                 # Pass all relevant encoder_kwargs, including 'use_layer_norm' if present
+                 n_params += EncoderClass.predict_number_params(input_size, output_size, n_basis, **encoder_kwargs)
             else:
-                 raise ValueError(f"Unknown encoder type: '{encoder_type}'")
+                 raise ValueError(f"Unknown or invalid encoder type: '{encoder_type}'")
 
         return n_params
 

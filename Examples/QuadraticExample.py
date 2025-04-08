@@ -16,7 +16,7 @@ parser.add_argument("--n_basis", type=int, default=11)
 parser.add_argument("--representation_mode", type=str, default="least_squares",
                     choices=["least_squares", "inner_product", "encoder_network"],
                     help="Method for computing representation.")
-parser.add_argument("--epochs", type=int, default=1_000)
+parser.add_argument("--epochs", type=int, default=10000)
 parser.add_argument("--load_path", type=str, default=None)
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--residuals", action="store_true")
@@ -52,6 +52,18 @@ input_range = (-10, 10)
 dataset = QuadraticDataset(a_range=a_range, b_range=b_range, c_range=c_range, input_range=input_range)
 
 if load_path is None:
+    # Define default encoder kwargs (can be customized)
+    # These are only used if representation_mode == "encoder_network"
+    custom_encoder_kwargs = dict(
+        phi_hidden_size=128,
+        phi_n_layers=3,
+        rho_hidden_size=128,
+        rho_n_layers=3,
+        activation="relu",
+        aggregation="mean", # Or "attention"
+        use_layer_norm=False # Set to True to enable LayerNorm
+    )
+
     # create the model
     model = FunctionEncoder(input_size=dataset.input_size,
                             output_size=dataset.output_size,
@@ -59,6 +71,8 @@ if load_path is None:
                             n_basis=n_basis,
                             model_type=arch,
                             representation_mode=representation_mode,
+                            # Pass kwargs only if using encoder network
+                            encoder_kwargs=custom_encoder_kwargs if representation_mode == "encoder_network" else dict(),
                             use_residuals_method=residuals).to(device)
     print('Number of parameters:', sum(p.numel() for p in model.parameters()))
 
@@ -73,6 +87,18 @@ if load_path is None:
     # save the model
     torch.save(model.state_dict(), f"{logdir}/model.pth")
 else:
+    # Define default encoder kwargs for loading as well
+    # These should match the settings used during training if loading an encoder network model
+    custom_encoder_kwargs = dict(
+        phi_hidden_size=128,
+        phi_n_layers=3,
+        rho_hidden_size=128,
+        rho_n_layers=3,
+        activation="relu",
+        aggregation="mean", # Or "attention"
+        use_layer_norm=False # Set to True if the loaded model used LayerNorm
+    )
+
     # load the model
     model = FunctionEncoder(input_size=dataset.input_size,
                             output_size=dataset.output_size,
@@ -80,6 +106,8 @@ else:
                             n_basis=n_basis,
                             model_type=arch,
                             representation_mode=representation_mode,
+                            # Pass kwargs only if using encoder network
+                            encoder_kwargs=custom_encoder_kwargs if representation_mode == "encoder_network" else dict(),
                             use_residuals_method=residuals).to(device)
     model.load_state_dict(torch.load(f"{logdir}/model.pth"))
 
