@@ -15,8 +15,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--n_basis", type=int, default=11)
 parser.add_argument("--representation_mode", type=str, default="least_squares",
                     choices=["least_squares", "inner_product", "encoder_network"],
-                    help="Method for computing representation.")
-parser.add_argument("--epochs", type=int, default=100000)
+                    help="Method for computing representation *during training* or if not loading.")
+parser.add_argument("--eval_mode", type=str, default=None,
+                    choices=["least_squares", "inner_product", "encoder_network"],
+                    help="Method for computing representation *during evaluation* (overrides training mode if specified).")
+parser.add_argument("--epochs", type=int, default=150000)
 parser.add_argument("--load_path", type=str, default=None)
 parser.add_argument("--seed", type=int, default=1)
 parser.add_argument("--residuals", action="store_true")
@@ -29,6 +32,7 @@ epochs = args.epochs
 n_basis = args.n_basis
 device = "cuda" if torch.cuda.is_available() else "cpu"
 representation_mode = args.representation_mode
+eval_mode = args.eval_mode if args.eval_mode is not None else representation_mode
 seed = args.seed
 load_path = args.load_path
 residuals = args.residuals
@@ -108,8 +112,14 @@ if load_path is None:
     # --- End Orthonormality Plot ---
 
 else:
-    # Define default encoder kwargs for loading as well
+    # --- Load Model Section ---
+    print(f"INFO: Loading model from {load_path}")
+    print(f"INFO: Model was trained with representation_mode='{representation_mode}'")
+    print(f"INFO: Evaluating with representation_mode='{eval_mode}'")
+
+    # Define default encoder kwargs for loading
     # These should match the settings used during training if loading an encoder network model
+    # We need these even if evaluating with a different mode, to ensure the state_dict loads correctly.
     custom_encoder_kwargs = dict(
         phi_hidden_size=128,
         phi_n_layers=3,
@@ -120,18 +130,30 @@ else:
         use_layer_norm=False # Set to True if the loaded model used LayerNorm
     )
 
-    # load the model
+    # Instantiate the model with the configuration it was *trained* with
     model = FunctionEncoder(input_size=dataset.input_size,
                             output_size=dataset.output_size,
                             data_type=dataset.data_type,
                             n_basis=n_basis,
                             model_type=arch,
-                            representation_mode=representation_mode,
-                            # Pass kwargs only if using encoder network
+                            representation_mode=representation_mode, # Use the original training mode here
+                            # Pass kwargs if the *trained* model used encoder network
                             encoder_kwargs=custom_encoder_kwargs if representation_mode == "encoder_network" else dict(),
                             use_residuals_method=residuals).to(device)
+
+    # Load the saved state dictionary
     model.load_state_dict(torch.load(f"{logdir}/model.pth"))
+    print(f"INFO: Model state_dict loaded successfully.")
+
+    # <<<--- SWITCH REPRESENTATION MODE FOR EVALUATION --- >>>
+    if args.eval_mode is not None and args.eval_mode != representation_mode:
+        print(f"INFO: Switching model's representation mode to '{args.eval_mode}' for evaluation.")
+        model.representation_mode = args.eval_mode
+    # <<<-------------------------------------------------- >>>
+
     print("INFO: Skipping orthonormality plot as model was loaded from path.")
+    # --- End Load Model Section ---
+
 
 # plot
 with torch.no_grad():
@@ -148,7 +170,7 @@ with torch.no_grad():
     for i in range(n_plots):
         ax = axs[i // 3, i % 3]
         ax.plot(query_xs[i].cpu(), query_ys[i].cpu(), label="True")
-        ax.plot(query_xs[i].cpu(), y_hats[i].cpu(), label=f"Pred ({representation_mode})")
+        ax.plot(query_xs[i].cpu(), y_hats[i].cpu(), label=f"Pred ({eval_mode})")
         if i == n_plots - 1:
             ax.legend()
         title = f"${info['As'][i].item():.2f}x^2 + {info['Bs'][i].item():.2f}x + {info['Cs'][i].item():.2f}$"
@@ -187,15 +209,17 @@ with torch.no_grad():
     test_example_ys = example_ys.to(device)
 
     # --- Time Representation Computation ---
-    # (This part now times the specific mode the model is configured with)
+    # This part now times the specific mode set for evaluation
     torch.cuda.synchronize() # Ensure previous GPU work is done (if using GPU)
     start_time = time.perf_counter()
     with torch.no_grad():
+        # compute_representation uses the potentially switched model.representation_mode
         computed_reps, _ = model.compute_representation(test_example_xs, test_example_ys)
     torch.cuda.synchronize() # Ensure GPU work is done
     end_time = time.perf_counter()
     rep_time = end_time - start_time
-    print(f"{representation_mode.upper()} Representation Time: {rep_time:.6f}s")
+    # Print the mode actually used for timing
+    print(f"{eval_mode.upper()} Representation Time: {rep_time:.6f}s")
 
     # Test prediction accuracy using the correct query data
     # Use the query_xs and query_ys generated earlier for the plots
@@ -204,12 +228,13 @@ with torch.no_grad():
 
     with torch.no_grad():
         # Predict using the same example data as the timing test
+        # predict_from_examples also uses the potentially switched model.representation_mode
         y_hats_acc = model.predict_from_examples(test_example_xs, test_example_ys, test_query_xs_acc)
 
         # Calculate MSE against the *correct* target values
         mse_acc = torch.mean((y_hats_acc - test_query_ys_acc)**2)
 
-    # Print the single, meaningful MSE value for the current mode
-    print(f"{representation_mode.upper()} Prediction MSE on test functions: {mse_acc.item():.6f}")
+    # Print the MSE for the mode actually used for evaluation
+    print(f"{eval_mode.upper()} Prediction MSE on test functions: {mse_acc.item():.6f}")
 
 

@@ -169,6 +169,69 @@ with torch.no_grad():
     plt.tight_layout()
     plt.savefig(f"{logdir}/gaussians.png")
     print(f"Saved plot to {logdir}/gaussians.png")
+    plt.clf() # Clear the figure for the next plot
+
+    # --- Plot Basis Functions ---
+    n_basis_plots = min(9, n_basis) # Plot up to 9 basis functions
+    n_basis_cols = 3
+    n_basis_rows = (n_basis_plots + n_basis_cols - 1) // n_basis_cols
+    # Increase vertical space slightly with figsize
+    fig_basis, axes_basis = plt.subplots(n_basis_rows, n_basis_cols, figsize=(n_basis_cols * 4, n_basis_rows * 4.2), squeeze=False)
+    fig_basis.suptitle("First Few Basis Functions", fontsize=16)
+
+    # Create a grid for evaluating basis functions
+    basis_grid_axis = torch.arange(-1, 1, 0.05, device=device) # Coarser grid for basis viz
+    basis_grid_dim = len(basis_grid_axis)
+    basis_xs = torch.stack(torch.meshgrid(basis_grid_axis, basis_grid_axis, indexing="ij"), dim=-1).reshape(-1, 2)
+    # Shape: (n_grid_points, 2)
+
+    # Evaluate basis functions on the grid
+    basis_values = model.forward_basis_functions(basis_xs) # Shape: (n_grid_points, output_size=1, n_basis)
+    basis_values = basis_values.squeeze(1) # Shape: (n_grid_points, n_basis)
+    basis_values = basis_values.reshape(basis_grid_dim, basis_grid_dim, n_basis) # Shape: (grid_dim, grid_dim, n_basis)
+    basis_values = basis_values.cpu().numpy()
+    basis_xs_plot = basis_grid_axis.cpu().numpy()
+
+    last_contour = None
+    for i in range(n_basis_plots):
+        row, col = i // n_basis_cols, i % n_basis_cols
+        ax = axes_basis[row, col]
+        basis_i_values = basis_values[:, :, i]
+        # Use a consistent color scale if desired, otherwise let each plot auto-scale
+        # vmin, vmax = np.min(basis_values), np.max(basis_values) # Uncomment for consistent scale
+        # contour = ax.contourf(basis_xs_plot, basis_xs_plot, basis_i_values, levels=50, cmap="viridis", vmin=vmin, vmax=vmax)
+        contour = ax.contourf(basis_xs_plot, basis_xs_plot, basis_i_values, levels=50, cmap="viridis")
+        ax.set_title(f"Basis {i}")
+        ax.set_xlabel("x1")
+        ax.set_ylabel("x2")
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_xlim(-1, 1)
+        ax.set_ylim(-1, 1)
+        last_contour = contour # Keep track of the last contour for the colorbar
+
+    # Remove empty subplots if n_basis_plots is not a multiple of n_basis_cols
+    for i in range(n_basis_plots, n_basis_rows * n_basis_cols):
+        row, col = i // n_basis_cols, i % n_basis_cols
+        fig_basis.delaxes(axes_basis[row, col])
+
+    # Adjust layout *before* adding the colorbar to make space
+    # Increase hspace and wspace for better separation
+    fig_basis.tight_layout(rect=[0, 0.03, 0.9, 0.95]) # Leave space on right for colorbar, top for suptitle
+    fig_basis.subplots_adjust(hspace=0.4, wspace=0.3) # Add more explicit spacing
+
+    # Add a colorbar in a dedicated space to the right
+    if last_contour:
+        # Position the colorbar axis: [left, bottom, width, height] in figure coordinates
+        cbar_ax = fig_basis.add_axes([0.92, 0.15, 0.03, 0.7]) # Adjust these values as needed
+        fig_basis.colorbar(last_contour, cax=cbar_ax)
+
+
+    basis_plot_path = f"{logdir}/basis_functions.png"
+    plt.savefig(basis_plot_path)
+    print(f"Saved basis function plot to {basis_plot_path}")
+    plt.clf()
+    # --- End Basis Function Plot ---
+
 
     # Print average KL divergence
     if kl_divergences:
