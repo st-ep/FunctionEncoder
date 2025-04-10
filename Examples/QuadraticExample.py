@@ -16,9 +16,9 @@ parser.add_argument("--n_basis", type=int, default=11)
 parser.add_argument("--representation_mode", type=str, default="least_squares",
                     choices=["least_squares", "inner_product", "encoder_network"],
                     help="Method for computing representation.")
-parser.add_argument("--epochs", type=int, default=10000)
+parser.add_argument("--epochs", type=int, default=100000)
 parser.add_argument("--load_path", type=str, default=None)
-parser.add_argument("--seed", type=int, default=0)
+parser.add_argument("--seed", type=int, default=1)
 parser.add_argument("--residuals", action="store_true")
 parser.add_argument("--parallel", action="store_true")
 args = parser.parse_args()
